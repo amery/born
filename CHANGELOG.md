@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-05-15
+
+### Fixed
+
+- **Tokenizer**: HuggingFace tokenizer now applies normalizer from tokenizer.json
+  - SentencePiece models (LLaMA, Mistral) require Prepend+Replace normalizer to map spaces to `▁` (U+2581)
+  - Without normalization, every token was wrong ("The" → ID 1576 instead of "▁The" → ID 450)
+  - Supported normalizers: Sequence, Prepend, Replace, Lowercase, Strip
+  - 13 new tests for normalizer parsing and word splitting
+
+## [0.8.1] - 2026-05-15
+
 ### Added
 
 - `models/llama`: New LLaMA model package with GGUF loading and injectable attention
