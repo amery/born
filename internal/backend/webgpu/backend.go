@@ -7,6 +7,7 @@ package webgpu
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 	"unsafe"
@@ -401,46 +402,52 @@ func (b *Backend) Embedding(weight, indices *tensor.RawTensor) *tensor.RawTensor
 //  3. Map the staging buffer (blocks until the GPU fence resolves).
 //  4. Copy data to CPU slice, Unmap.
 func (b *Backend) ReadGPUBuffer(bufferPtr unsafe.Pointer, size uint64) ([]byte, error) {
-	// Flush all pending batched commands (compute + CopyBufferToBuffer to staging).
 	b.flushCommands()
 
-	// Wait for ALL pending GPU work to complete before mapping.
-	// Without this Poll, Map()'s internal Poll(PollPoll) can return "done"
-	// prematurely on backends (DX12) that signal fences conservatively,
-	// causing the staging buffer to be read before the compute pass has
-	// finished writing to it — resulting in zeros.
-	// This matches the pattern used by readBuffer() for the split-encoder path.
+	if debugReadGPU {
+		fmt.Fprintf(os.Stderr, "[ReadGPUBuffer] Poll(PollWait) start, size=%d\n", size)
+	}
 	b.device.Poll(wgpu.PollWait)
+	if debugReadGPU {
+		fmt.Fprintln(os.Stderr, "[ReadGPUBuffer] Poll(PollWait) done")
+	}
 
 	buffer := (*wgpu.Buffer)(bufferPtr)
 
-	// Map the staging buffer. After Poll(PollWait) the GPU is idle, so
-	// Map() returns immediately without blocking on the fence.
-	// Timeout prevents infinite hang if buffer was released by GC finalizer.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	if debugReadGPU {
+		fmt.Fprintln(os.Stderr, "[ReadGPUBuffer] Map start")
+	}
 	if err := buffer.Map(ctx, wgpu.MapModeRead, 0, size); err != nil {
-		return nil, fmt.Errorf("webgpu: ReadGPUBuffer: failed to map staging buffer (size=%d): %w", size, err)
+		return nil, fmt.Errorf("webgpu: ReadGPUBuffer: map failed (size=%d): %w", size, err)
+	}
+	if debugReadGPU {
+		fmt.Fprintln(os.Stderr, "[ReadGPUBuffer] Map done")
 	}
 	defer func() { _ = buffer.Unmap() }()
 
 	mappedRange, err := buffer.MappedRange(0, size)
 	if err != nil {
-		return nil, fmt.Errorf("webgpu: ReadGPUBuffer: failed to get mapped range: %w", err)
+		return nil, fmt.Errorf("webgpu: ReadGPUBuffer: mapped range (size=%d): %w", size, err)
 	}
 	defer mappedRange.Release()
 
 	data := mappedRange.Bytes()
 	if data == nil {
-		return nil, fmt.Errorf("webgpu: ReadGPUBuffer: MappedRange.Bytes() returned nil (buffer may have been unmapped or released)")
+		return nil, fmt.Errorf("webgpu: ReadGPUBuffer: Bytes() nil (buffer released?)")
 	}
 	if uint64(len(data)) < size {
-		return nil, fmt.Errorf("webgpu: ReadGPUBuffer: MappedRange.Bytes() returned %d bytes but need %d (buffer size mismatch)", len(data), size)
+		return nil, fmt.Errorf("webgpu: ReadGPUBuffer: got %d bytes, need %d", len(data), size)
 	}
 	result := make([]byte, size)
 	copy(result, data)
 	return result, nil
 }
+
+// debugReadGPU enables stderr logging for ReadGPUBuffer calls.
+// Set via BORN_DEBUG_GPU=1 environment variable.
+var debugReadGPU = os.Getenv("BORN_DEBUG_GPU") == "1"
 
 // ReleaseGPUBuffer implements tensor.LazyBackend interface.
 // Releases a GPU buffer when no longer needed.
