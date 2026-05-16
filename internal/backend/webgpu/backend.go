@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 	"unsafe"
 
 	"github.com/born-ml/born/internal/tensor"
@@ -415,9 +416,11 @@ func (b *Backend) ReadGPUBuffer(bufferPtr unsafe.Pointer, size uint64) ([]byte, 
 
 	// Map the staging buffer. After Poll(PollWait) the GPU is idle, so
 	// Map() returns immediately without blocking on the fence.
-	ctx := context.Background()
+	// Timeout prevents infinite hang if buffer was released by GC finalizer.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 	if err := buffer.Map(ctx, wgpu.MapModeRead, 0, size); err != nil {
-		return nil, fmt.Errorf("webgpu: ReadGPUBuffer: failed to map staging buffer: %w", err)
+		return nil, fmt.Errorf("webgpu: ReadGPUBuffer: failed to map staging buffer (size=%d): %w", size, err)
 	}
 	defer func() { _ = buffer.Unmap() }()
 
