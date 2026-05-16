@@ -77,7 +77,7 @@ func (op *SiLUOp) Backward(outputGrad *tensor.RawTensor, backend tensor.Backend)
 	// Derivative: sigmoid(x) * (1 + x * (1 - sigmoid(x)))
 	xOneMinusSig := backend.Mul(x, oneMinusSig)   // x * (1 - σ(x))
 	inner := backend.AddScalar(xOneMinusSig, one) // 1 + x*(1-σ(x))
-	deriv := backend.Mul(sig, inner)               // σ(x) * inner
+	deriv := backend.Mul(sig, inner)              // σ(x) * inner
 
 	// Chain rule: grad_input = grad_output * derivative
 	gradInput := backend.Mul(outputGrad, deriv)
