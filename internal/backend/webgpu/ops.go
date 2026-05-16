@@ -704,15 +704,10 @@ func (b *Backend) Unsqueeze(x *tensor.RawTensor, dim int) *tensor.RawTensor {
 
 // SelectAdd performs a scatter-add along the specified dimension.
 //
-// This operation is used primarily in Embedding backward to accumulate gradient
-// rows into the weight gradient tensor. GPU atomics (required for a proper WGSL
-// scatter-add) are available via atomicAdd for u32/i32 but not for f32 in
-// WebGPU core; an emulated f32 atomic would add significant kernel complexity.
-//
-// For now this falls back to the CPU: data is transferred from GPU to CPU via
-// Data(), the scatter-add runs in Go, and the result is returned as a CPU-device
-// tensor. A native GPU kernel can replace this in a future TASK without any API
-// change.
+// Used primarily in Embedding backward to accumulate gradient rows into the weight
+// gradient tensor. In LazyMode, dispatches a GPU compute shader that keeps the
+// result on GPU without requiring f32 atomics (per-destination-row approach).
+// Falls back to CPU for non-lazy mode.
 func (b *Backend) SelectAdd(dest *tensor.RawTensor, dim int, indices, src *tensor.RawTensor) *tensor.RawTensor {
 	if indices.DType() != tensor.Int32 {
 		panic("webgpu: SelectAdd: indices must be int32")
@@ -738,7 +733,25 @@ func (b *Backend) SelectAdd(dest *tensor.RawTensor, dim int, indices, src *tenso
 		panic(fmt.Sprintf("webgpu: SelectAdd: src dim %d (%d) != len(indices) (%d)", dim, srcShape[dim], numIndices))
 	}
 
-	// Clone dest data into a new result tensor.
+	// GPU path: selectAddShader handles dim=1 with 2-D tensors [numRows, innerSize].
+	// For the common Embedding backward case this is always 2-D with dim=0.
+	if b.LazyMode && ndim == 2 && dim == 0 && dest.DType() == tensor.Float32 {
+		result, err := b.runSelectAddLazy(dest, indices, src)
+		if err != nil {
+			panic("webgpu: SelectAdd: " + err.Error())
+		}
+		return result
+	}
+
+	// CPU fallback for non-lazy mode or unsupported shapes/dtypes.
+	return b.selectAddCPU(dest, dim, indices, src, destShape, srcShape, numIndices)
+}
+
+// selectAddCPU is the CPU fallback for SelectAdd.
+func (b *Backend) selectAddCPU(
+	dest *tensor.RawTensor, dim int, indices, src *tensor.RawTensor,
+	destShape, srcShape tensor.Shape, numIndices int,
+) *tensor.RawTensor {
 	result, err := tensor.NewRaw(destShape, dest.DType(), tensor.WebGPU)
 	if err != nil {
 		panic("webgpu: SelectAdd: " + err.Error())
@@ -746,7 +759,6 @@ func (b *Backend) SelectAdd(dest *tensor.RawTensor, dim int, indices, src *tenso
 	copy(result.Data(), dest.Data())
 
 	idxData := indices.AsInt32()
-
 	dstStrides := destShape.ComputeStrides()
 	srcStrides := srcShape.ComputeStrides()
 	innerSize := srcShape.NumElements() / srcShape[dim]
@@ -831,20 +843,33 @@ func (b *Backend) Squeeze(x *tensor.RawTensor, dim int) *tensor.RawTensor {
 // For each element in src (same shape as indices), accumulates into result along dim
 // at the position given by the corresponding index value. Follows Burn's float_scatter_add.
 //
-// WebGPU atomic scatter requires f32 atomics which are not guaranteed by wgpu
-// on all hardware. For now this falls back to the CPU: data is read from the tensor
-// buffer, the scatter-add runs in Go, and the result is stored back. A native GPU
-// kernel can replace this in a future task without any API change.
+// In LazyMode, dispatches a GPU compute shader that keeps the result on GPU using a
+// per-destination-element approach (no f32 atomics required). Falls back to CPU for
+// non-lazy mode.
 //
 // Returns a new tensor with the same shape as dest. dest is not modified.
 func (b *Backend) ScatterAdd(dest *tensor.RawTensor, dim int, indices, src *tensor.RawTensor) *tensor.RawTensor {
 	dim = webgpuValidateScatterAdd(dest, dim, indices, src)
 
+	// GPU path in LazyMode: scatterAddShader handles arbitrary N-D tensors (up to 6D).
+	if b.LazyMode && dest.DType() == tensor.Float32 {
+		result, err := b.runScatterAddLazy(dest, dim, indices, src)
+		if err != nil {
+			panic("webgpu: ScatterAdd: " + err.Error())
+		}
+		return result
+	}
+
+	// CPU fallback for non-lazy mode or unsupported dtypes.
+	return b.scatterAddCPU(dest, dim, indices, src)
+}
+
+// scatterAddCPU is the CPU fallback for ScatterAdd.
+func (b *Backend) scatterAddCPU(dest *tensor.RawTensor, dim int, indices, src *tensor.RawTensor) *tensor.RawTensor {
 	destShape := dest.Shape()
 	srcShape := src.Shape()
 	indexShape := indices.Shape()
 
-	// Clone dest into result.
 	result, err := tensor.NewRaw(destShape, dest.DType(), tensor.WebGPU)
 	if err != nil {
 		panic("webgpu: ScatterAdd: " + err.Error())

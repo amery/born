@@ -413,6 +413,12 @@ var bglWhere = []gputypes.BindGroupLayoutEntry{
 	bglStorage(0, true), bglStorage(1, true), bglStorage(2, true), bglStorage(3, false), bglUniform(4),
 }
 
+// bglScatter returns BGL entries for scatter-add ops: 3 RO storage + 1 RW storage + 1 uniform.
+// Identical layout to bglWhere: dest(RO), indices(RO), src(RO), result(RW), params(uniform).
+var bglScatter = []gputypes.BindGroupLayoutEntry{
+	bglStorage(0, true), bglStorage(1, true), bglStorage(2, true), bglStorage(3, false), bglUniform(4),
+}
+
 // runBinaryOp executes a binary element-wise operation (add, sub, mul, div) on GPU.
 // Supports NumPy-style broadcasting. Supports float32 and int32 dtypes.
 func (b *Backend) runBinaryOp(a, other *tensor.RawTensor, shaderName, shaderCode string) (*tensor.RawTensor, error) {
