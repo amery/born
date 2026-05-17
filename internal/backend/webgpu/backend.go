@@ -27,6 +27,18 @@ type pipelineEntry struct {
 	pipelineLayout *wgpu.PipelineLayout
 }
 
+// pendingSubmission holds a finished command buffer that has not yet been
+// submitted to the GPU queue, plus the intermediate result buffers that must
+// remain alive until after queue.Submit returns (BUG-LAZY-DEFER-RELEASE).
+//
+// Each lazy op produces one pendingSubmission via finishAndQueueLazy. All
+// pending submissions are flushed in a single queue.Submit call when any
+// tensor's Data() triggers ReadGPUBuffer.
+type pendingSubmission struct {
+	cmdBuffer  *wgpu.CommandBuffer
+	resultBufs []*wgpu.Buffer // released after queue.Submit completes
+}
+
 // Backend implements tensor operations on GPU using WebGPU.
 type Backend struct {
 	instance *wgpu.Instance
@@ -50,6 +62,15 @@ type Backend struct {
 	// Phase 3 Integration - eliminates readBuffer() bottleneck.
 	// Default: true for optimal performance.
 	LazyMode bool
+
+	// Pending command buffers queued for batched submission.
+	// Populated by finishAndQueueLazy; drained by flushCommands.
+	// Protected by pendingMu. This is the core of the batched-dispatch
+	// optimization: instead of 1 Submit per op (~500 µs each), all pending
+	// command buffers are submitted in a single queue.Submit call when the
+	// first Data() access triggers ReadGPUBuffer.
+	pending   []pendingSubmission
+	pendingMu sync.Mutex
 
 	// Memory tracking
 	memoryStats struct {
@@ -125,9 +146,45 @@ func (b *Backend) SetLazyMode(enabled bool) {
 	b.LazyMode = enabled
 }
 
-// flushCommands is a no-op retained for backwards compatibility.
-// All GPU operations now use immediate submit to prevent buffer lifetime issues.
-func (b *Backend) flushCommands() {}
+// flushCommands submits all pending command buffers to the GPU in a single
+// queue.Submit call, then releases the intermediate result buffers that were
+// kept alive for the duration of the submission.
+//
+// Called by ReadGPUBuffer before Map — ensures the GPU has received all
+// commands that produce data for the staging buffer being mapped.
+//
+// If there are no pending submissions, this is a fast no-op (single mutex
+// acquire + nil check).
+func (b *Backend) flushCommands() {
+	b.pendingMu.Lock()
+	if len(b.pending) == 0 {
+		b.pendingMu.Unlock()
+		return
+	}
+	pending := b.pending
+	b.pending = nil
+	b.pendingMu.Unlock()
+
+	// Collect all command buffers for a single Submit call.
+	// queue.Submit is variadic: Submit(cmds ...*CommandBuffer).
+	cmdBufs := make([]*wgpu.CommandBuffer, len(pending))
+	for i, p := range pending {
+		cmdBufs[i] = p.cmdBuffer
+	}
+
+	if _, err := b.queue.Submit(cmdBufs...); err != nil {
+		panic("webgpu: flushCommands: submit failed: " + err.Error())
+	}
+
+	// Release intermediate result buffers now that Submit has registered them
+	// with the GPU's destroy queue (lastSubmissionIndex updated). wgpu defers
+	// the actual HAL destruction until the GPU completes this submission index.
+	for _, p := range pending {
+		for _, buf := range p.resultBufs {
+			buf.Release()
+		}
+	}
+}
 
 // Release releases all WebGPU resources.
 // Must be called when the backend is no longer needed.
@@ -389,17 +446,17 @@ func (b *Backend) Embedding(weight, indices *tensor.RawTensor) *tensor.RawTensor
 // Reads data from a GPU staging buffer (MapRead | CopyDst) to CPU memory.
 // bufferPtr must point to a *wgpu.Buffer created with BufferUsageMapRead.
 //
-// The lazy path (runBinaryOpLazy, runUnaryOpLazy, etc.) creates a staging buffer
-// in the same encoder as the compute pass (unified encoder pattern). The staging
-// buffer already has the computed data after the batch submit completes.
+// The lazy path (runBinaryOpLazy, runUnaryOpLazy, etc.) finishes each encoder
+// into a CommandBuffer and queues it in b.pending without submitting. On the
+// first Data() call, ReadGPUBuffer flushes the entire pending queue in a single
+// queue.Submit, collapsing N individual submits (~500 µs each) into one.
 //
 // Sequence:
-//  1. flushCommands() — submit all batched compute+copy commands.
-//  2. Poll(PollWait) — block until the GPU completes the submitted commands.
-//     This is required because Map()'s internal Poll(PollPoll) may resolve
-//     immediately using a prior submission's fence when a backend has received
-//     multiple submits (DX12/Vulkan fence ordering artifact with batched commands).
-//  3. Map the staging buffer (blocks until the GPU fence resolves).
+//  1. flushCommands() — submit all pending command buffers in one batch.
+//  2. Poll(PollWait) — block until the GPU completes all submitted commands.
+//     Required: Map's internal Poll(PollPoll) may return a stale fence when
+//     multiple submissions are outstanding (DX12/Vulkan ordering artifact).
+//  3. Map the staging buffer (blocks until GPU fence resolves).
 //  4. Copy data to CPU slice, Unmap.
 func (b *Backend) ReadGPUBuffer(bufferPtr unsafe.Pointer, size uint64) ([]byte, error) {
 	b.flushCommands()

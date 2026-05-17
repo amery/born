@@ -487,10 +487,10 @@ func TestEmbedding_Backward_GradientFlow(t *testing.T) {
 	defer backend.Tape().StopRecording()
 
 	const (
-		vocab   = 10
+		vocab    = 10
 		embedDim = 8
-		outDim  = 4
-		seqLen  = 5
+		outDim   = 4
+		seqLen   = 5
 	)
 
 	embed := nn.NewEmbedding[*autodiff.AutodiffBackend[*cpu.CPUBackend]](vocab, embedDim, backend)
@@ -561,8 +561,8 @@ func TestEmbedding_Backward_ScalarMul(t *testing.T) {
 
 	const scale = float32(3.0)
 
-	embOut := embed.Forward(indices)       // [4, 3]
-	scaled := embOut.MulScalar(scale)      // [4, 3] — each element × scale
+	embOut := embed.Forward(indices)  // [4, 3]
+	scaled := embOut.MulScalar(scale) // [4, 3] — each element × scale
 
 	grads := autodiff.Backward(scaled, backend)
 
