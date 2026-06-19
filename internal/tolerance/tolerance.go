@@ -134,7 +134,7 @@ func checkAbs[T float32 | float64](a, b, abs T) error {
 // Returns nil if |a-b| < max(rel * max(|a|, |b|), abs).
 func checkRelAbs[T float32 | float64](a, b, rel, abs T) error {
 	absDiff := math.Abs(float64(a - b))
-	relTol := float64(rel) * math.Max(float64(a), float64(b))
+	relTol := float64(rel) * math.Max(math.Abs(float64(a)), math.Abs(float64(b)))
 	moreLenientTol := math.Max(float64(abs), relTol)
 
 	// handles NaN case, if a or b is NaN then absDiff compared to anything will be false

@@ -84,13 +84,18 @@ func TestAssertApproxEqual_RelAbs(t *testing.T) {
 		description string
 	}{
 		{name: "exact match", a: 1.0, b: 1.0, rel: 0.1, abs: 0.1, want: true},
-		{name: "within relative tolerance", a: 1.0, b: 1.05, rel: 0.1, abs: 0.1, want: true},
+		{name: "within relative tolerance", a: 1.0, b: 1.05, rel: 0.1, abs: 1e-9, want: true},
 		{name: "within absolute tolerance", a: 1.0, b: 1.05, rel: 1e-9, abs: 0.1, want: true},
 		{name: "over both tolerances", a: 1.0, b: 1.3, rel: 0.1, abs: 0.1, want: false},
 		{name: "large values fail rel pass abs", a: 1e6, b: 1.01e6, rel: 1e-9, abs: 0.1, want: false},
 		{name: "tight rel loose abs", a: 1.0, b: 1.01, rel: 1e-9, abs: 0.1, want: true},
 		{name: "abs less than 0.0", a: 1.0, b: 1.0, abs: -0.1, want: false},
 		{name: "rel greater than 1.0", a: 1.0, b: 1.0, rel: 1.1, want: false},
+		{name: "within relative tolerance (negative)", a: -1.0, b: -1.05, rel: 0.1, abs: 1e-9, want: true},
+		{name: "within absolute tolerance (negative)", a: -1.0, b: -1.05, rel: 1e-9, abs: 0.1, want: true},
+		{name: "over both tolerances (negative)", a: -1.0, b: -1.3, rel: 0.1, abs: 0.1, want: false},
+		{name: "large values fail rel pass abs (negative)", a: -1e6, b: -1.01e6, rel: 1e-9, abs: 0.1, want: false},
+		{name: "tight rel loose abs (negative)", a: -1.0, b: -1.01, rel: 1e-9, abs: 0.1, want: true},
 	}
 
 	for _, tt := range tests {
