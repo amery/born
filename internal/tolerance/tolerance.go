@@ -89,7 +89,7 @@ func AssertAllApproxEqual[T float32 | float64](a, b []T, tol *Tolerance[T]) erro
 	}
 	for i := range a {
 		if err := AssertApproxEqual(a[i], b[i], tol); err != nil {
-			return fmt.Errorf("element at index %d: %w", i, err)
+			return fmt.Errorf("element[%d]: %w", i, err)
 		}
 	}
 	return nil
