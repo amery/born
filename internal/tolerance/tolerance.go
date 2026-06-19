@@ -20,13 +20,13 @@ const (
 )
 
 // Tolerance holds parameters for approximate floating-point equality checks.
+// Abs and Rel must be > 0 or every check will fail (strict less-than).
 //
-// The zero value is not usable; construct one with NewDefaultTolerance or
-// a struct literal with exported fields.
+// Construct one with NewDefaultTolerance.
 type Tolerance[T float32 | float64] struct {
-	tolType TolType
-	abs     T // absolute tolerance
-	rel     T // relative tolerance factor
+	TolType TolType
+	Abs     T // absolute tolerance
+	Rel     T // relative tolerance factor
 }
 
 // NewDefaultTolerance returns a Tolerance with sensible defaults.
@@ -43,40 +43,31 @@ func NewDefaultTolerance[T float32 | float64]() *Tolerance[T] {
 		rel = 1e-4
 	}
 	return &Tolerance[T]{
-		tolType: RelAbs,
-		abs:     1e-5,
-		rel:     rel,
+		TolType: RelAbs,
+		Abs:     1e-5,
+		Rel:     rel,
 	}
 }
 
 // AssertApproxEqual checks whether a and b are approximately equal according
-// to the given tolerance.
+// to the given tolerance. Fails if either value is NaN.
 //
-// Absolute tolerance: passes when |a-b| < tol.abs.
-// Relative tolerance: passes when |a-b| < tol.rel * |a+b|.
+// Absolute tolerance: passes when |a-b| < tol.Abs.
+// Relative tolerance: passes when |a-b| < tol.Rel * max(|a|, |b|).
 // Combined (RelAbs): passes when either condition is met.
 //
 // Returns nil if the values are approximately equal, or an error describing
 // which tolerance check failed.
 func AssertApproxEqual[T float32 | float64](a, b T, tol *Tolerance[T]) error {
-	switch tol.tolType {
+	switch tol.TolType {
 	case Abs:
-		return checkAbsolute(a, b, tol.abs)
+		return checkAbs(a, b, tol.Abs)
 	case Rel:
-		return checkRelative(a, b, tol.rel)
+		return checkRel(a, b, tol.Rel)
 	case RelAbs:
-		absErr := checkAbsolute(a, b, tol.abs)
-		relErr := checkRelative(a, b, tol.rel)
-		switch {
-		case absErr == nil || relErr == nil:
-			return nil
-		case absErr != nil:
-			return absErr
-		case relErr != nil:
-			return relErr
-		}
+		return checkRelAbs(a, b, tol.Rel, tol.Abs)
 	}
-	return nil
+	return fmt.Errorf("unexpected TolType: %d", tol.TolType)
 }
 
 // AssertAllApproxEqual checks a and b element-wise for approximate equality.
@@ -95,12 +86,12 @@ func AssertAllApproxEqual[T float32 | float64](a, b []T, tol *Tolerance[T]) erro
 	return nil
 }
 
-// checkRelative is a helper to compare two values using absolute tolerance.
+// checkRel is a helper to compare two values using relative tolerance.
 //
-// Returns nil if |a-b| < tol.rel * |a+b|, an error otherwise.
-func checkRelative[T float32 | float64](a, b, rel T) error {
+// Returns nil if |a-b| < rel * max(|a|, |b|), an error otherwise.
+func checkRel[T float32 | float64](a, b, rel T) error {
 	absDiff := math.Abs(float64(a - b))
-	relTol := float64(rel) * math.Abs(float64(a+b))
+	relTol := float64(rel) * math.Max(math.Abs(float64(a)), math.Abs(float64(b)))
 	// handles NaN case, if a or b is NaN then absDiff compared to anything will be false
 	if absDiff < relTol {
 		return nil
@@ -108,14 +99,31 @@ func checkRelative[T float32 | float64](a, b, rel T) error {
 	return fmt.Errorf("relative tolerance failure: %f >= %f", absDiff, relTol)
 }
 
-// checkAbsolute is a helper to compare two values using absolute tolerance.
+// checkAbs is a helper to compare two values using absolute tolerance.
 //
-// Returns nil if |a-b| < tol.abs, an error otherwise.
-func checkAbsolute[T float32 | float64](a, b, abs T) error {
+// Returns nil if |a-b| < abs, an error otherwise.
+func checkAbs[T float32 | float64](a, b, abs T) error {
 	absDiff := math.Abs(float64(a - b))
 	// handles NaN case, if a or b is NaN then absDiff compared to anything will be false
 	if absDiff < float64(abs) {
 		return nil
 	}
 	return fmt.Errorf("absolute tolerance failure: %f >= %f", absDiff, abs)
+}
+
+// checkRelAbs is a helper to compare two values using relative and
+// absolute tolerance.
+//
+// Returns nil if |x-y| < max(rel * |x+y|, abs).
+func checkRelAbs[T float32 | float64](a, b, rel, abs T) error {
+	absDiff := math.Abs(float64(a - b))
+	// handles NaN case, if a or b is NaN then absDiff compared to anything will be false
+	if absDiff < float64(abs) {
+		return nil
+	}
+	relTol := float64(rel) * math.Abs(float64(a+b))
+	if absDiff < relTol {
+		return nil
+	}
+	return fmt.Errorf("relative (%f >= %f) and absolute (%f >= %f) tolerance failure", absDiff, abs, absDiff, relTol)
 }

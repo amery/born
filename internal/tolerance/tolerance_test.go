@@ -28,7 +28,7 @@ func TestAssertApproxEqual_Absolute(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tol := &Tolerance[float64]{tolType: Abs, abs: tt.abs}
+			tol := &Tolerance[float64]{TolType: Abs, Abs: tt.abs}
 			err := AssertApproxEqual(tt.a, tt.b, tol)
 			if (err == nil) != tt.want {
 				t.Errorf("AssertApproxEqual(%v, %v, abs=%v): got err=%v, want success=%v",
@@ -61,7 +61,7 @@ func TestAssertApproxEqual_Relative(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tol := &Tolerance[float64]{tolType: Rel, rel: tt.rel}
+			tol := &Tolerance[float64]{TolType: Rel, Rel: tt.rel}
 			err := AssertApproxEqual(tt.a, tt.b, tol)
 			if (err == nil) != tt.want {
 				t.Errorf("AssertApproxEqual(%v, %v, rel=%v): got err=%v, want success=%v",
@@ -91,7 +91,7 @@ func TestAssertApproxEqual_RelAbs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tol := &Tolerance[float64]{tolType: RelAbs, rel: tt.rel, abs: tt.abs}
+			tol := &Tolerance[float64]{TolType: RelAbs, Rel: tt.rel, Abs: tt.abs}
 			err := AssertApproxEqual(tt.a, tt.b, tol)
 			if (err == nil) != tt.want {
 				t.Errorf("AssertApproxEqual(%v, %v, rel=%v, abs=%v): got err=%v, want success=%v",
@@ -133,7 +133,7 @@ func TestAssertApproxEqual_WithDefaultTolerance(t *testing.T) {
 // TestAssertApproxEqual_Special covers NaN and Inf inputs, which should
 // always produce a failure since arithmetic on these produces NaN diffs.
 func TestAssertApproxEqual_Special(t *testing.T) {
-	tol := &Tolerance[float64]{tolType: Abs, abs: 0.1}
+	tol := &Tolerance[float64]{TolType: Abs, Abs: 0.1}
 
 	tests := []struct {
 		name string
@@ -178,7 +178,7 @@ func TestAssertAllApproxEqual(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tol := &Tolerance[float64]{tolType: Abs, abs: tt.abs}
+			tol := &Tolerance[float64]{TolType: Abs, Abs: tt.abs}
 			err := AssertAllApproxEqual(tt.a, tt.b, tol)
 			if tt.want {
 				if err != nil {
